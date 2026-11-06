@@ -253,7 +253,7 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
       <h3>Referenz für die Verbesserung der Erkennung</h3>
       <label class="pl hint"><input type="checkbox" id="rallyChecked"> Ich habe alle Ballwechsel in diesem Video geprüft und korrigiert</label>
       <div class="row"><button id="exportBtn">Analyse-Daten exportieren</button><span class="hint" id="exportInfo"></span></div>
-      <p class="hint">Exportiert Laufwege, Zeitpunkte der Ballgeräusche und Schlagbewegungen, die erkannten und die von dir korrigierten Ballwechsel als JSON-Datei. Das Video selbst ist nicht enthalten.</p>
+      <p class="hint">Exportiert Laufwege, Zeitpunkte der Ballgeräusche und Schlagbewegungen, die erkannten und die von dir korrigierten Ballwechsel sowie die automatischen und die von dir markierten Schläge (unter «Laufwege» → Ballwechsel wählen → «Schläge selbst markieren») als JSON-Datei. Das Video selbst ist nicht enthalten.</p>
     </div>
     <div class="card">
       <h2>Laufmeter über die Zeit</h2>
@@ -286,6 +286,8 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
       <p class="hint" id="pathLegend"></p>
       <div id="shotBox" hidden>
         <h3>Schlag für Schlag</h3>
+        <div class="row"><button id="shotMarkBtn">Schläge selbst markieren</button><button id="shotResetBtn" hidden>Automatische Schläge wiederherstellen</button></div>
+        <p class="hint" id="shotMarkInfo"></p>
         <div class="row"><button id="thumbBtn">Einzelbilder aus dem Video laden</button><span class="hint" id="thumbInfo"></span></div>
         <div class="shotgrid" id="shotList"></div>
       </div>
@@ -350,7 +352,7 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
   <footer>Grenzen: Die Messung basiert auf den Füssen im Bild. Wenn sich die Spieler überdecken oder die Füsse unten aus dem Bild laufen, entstehen kurze Lücken. Lücken bis 2 Sekunden werden als gerade Strecke ergänzt, längere nicht mitgezählt. Die Laufmeter sind darum eher etwas zu tief als zu hoch. Laufwege zwischen den Ballwechseln zählen mit.</footer>
   <video id="vid" class="vhold" playsinline muted preload="auto"></video>
   <div class="shottip" id="shotTip" hidden><canvas id="shotTipCv"></canvas><div class="cap" id="shotTipCap"></div></div>
-  <div class="overlay" id="player" hidden><div class="pbox"><div class="row" style="justify-content:space-between"><b id="playerTitle"></b><button id="playerClose">Schliessen</button></div><div id="playerSlot"></div><p class="hint" id="playerNote"></p><div class="row"><button id="playerAgain">Nochmals</button><button id="playerSlow">Langsam (0,5×)</button><button id="playerStart" hidden>Beginn hier</button><button class="primary" id="playerEnd" hidden>Ende hier</button></div></div></div>
+  <div class="overlay" id="player" hidden><div class="pbox"><div class="row" style="justify-content:space-between"><b id="playerTitle"></b><button id="playerClose">Schliessen</button></div><div id="playerSlot"></div><p class="hint" id="playerNote"></p><div class="row"><button id="playerAgain">Nochmals</button><button id="playerSlow">Langsam (0,5×)</button><button id="playerStart" hidden>Beginn hier</button><button class="primary" id="playerEnd" hidden>Ende hier</button></div><div class="row" id="shotMarkRow" hidden><button class="primary" id="markA">Schlag A</button><button class="primary" id="markB">Schlag B</button><button id="markUndo">Rückgängig</button><button id="markDone">Fertig, speichern</button></div><p class="hint mono" id="markCount"></p></div></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.22.0/tf.min.js"></script>
@@ -1109,7 +1111,14 @@ function deepAnalysis(res,EX){
   if(res.swings&&res.swings.length){out.shots=shotSequence(res,out,X,n,t0);out.shotSrc='swing';}
   else out.shots=(out._conf||[]).map(c=>{const k=Math.round(c.k);if(k<0||k>=n)return null;const r=out.rallies.findIndex(q=>k>=q.a-FPS&&k<=q.b);if(r<0)return null;
     const me=X[c.p][k],op=X[1-c.p][k];if(!me)return null;return{k,t:t0+k/FPS,p:c.p,r,me,op};}).filter(Boolean);
-  if(!out.shotSrc)out.shotSrc='audio';delete out._conf;delete out._X;
+  if(!out.shotSrc)out.shotSrc='audio';
+  /* shots you marked yourself replace the automatic ones of that rally (the automatic ones are kept for the export) */
+  out.shotsAuto=out.shots.slice();const se=res.shotEdit||{};
+  if(Object.keys(se).length){const near=(p,k)=>{for(let d=0;d<=3;d++){if(X[p][k-d])return X[p][k-d];if(X[p][k+d])return X[p][k+d];}return null;};
+    out.rallies.forEach((r,ri)=>{const L=se[r.key];if(!L)return;r.shotsChecked=true;out.shots=out.shots.filter(x=>x.r!==ri);
+      L.forEach(([t,p])=>{const k=clamp(Math.round((t-t0)*FPS),0,n-1),me=near(p,k);if(me)out.shots.push({k,t,p,r:ri,me,op:near(1-p,k),manual:true});});});
+    out.shots.sort((a,b)=>a.t-b.t);}
+  delete out._conf;delete out._X;
   out.hasPose=!!(res.pose&&res.pose.some(q=>q.length>20));
   out.validMin=Math.max(1e-6,valid.filter(Boolean).length/FPS/60);
   return out;}
@@ -1244,6 +1253,15 @@ function renderRallyList(res,D){
   const ck=$('rallyChecked');ck.checked=!!res.rallyChecked;ck.onchange=()=>{res.rallyChecked=ck.checked;saveRes(res);};
   $('exportBtn').onclick=()=>exportData(res,D);
 }
+/* mark the shots of one rally while it plays: tap the hitter's name at every shot; «Fertig» stores them */
+function markShots(res,D,ri){if(!haveVideo||analyzing)return;const r=D.rallies[ri],t0=current.EX.t0,names=res.names,list=[];
+  playRange(t0+r.a/FPS-1,t0+r.b/FPS+1.5,`Ballwechsel ${ri+1}: Schläge markieren`,'Tippe bei jedem Schlag (Ball trifft den Schläger) auf den Namen des Spielers, der schlägt. Tipp: «Langsam (0,5×)», mit «Nochmals» von vorne. «Fertig, speichern» übernimmt die Schläge.');
+  $('shotMarkRow').hidden=false;$('markA').textContent='Schlag '+names[0];$('markB').textContent='Schlag '+names[1];
+  const info=()=>{$('markCount').textContent=list.length?list.map((x,i)=>`${i+1}. ${showT1(x[0])} ${names[x[1]]}`).join(' · '):'Noch keine Schläge markiert.';};info();
+  $('markA').onclick=()=>{list.push([+video.currentTime.toFixed(2),0]);info();};
+  $('markB').onclick=()=>{list.push([+video.currentTime.toFixed(2),1]);info();};
+  $('markUndo').onclick=()=>{list.pop();info();};
+  $('markDone').onclick=()=>{res.shotEdit=res.shotEdit||{};res.shotEdit[r.key]=list.slice().sort((a,b)=>a[0]-b[0]);$('playerClose').onclick();saveRes(res);rerender(res);};}
 /* set the start or end of a rally to a video time (from «Beginn hier» / «Ende hier» while playing) */
 function markRally(res,D,r,which,t){const t0=current.EX.t0,ed=res.rallyEdit;
   if(r.manual){const m=ed.add[r.addIdx];if(!m)return;if(which==='a')m[0]=Math.min(t,m[1]-1);else m[1]=Math.max(t,m[0]+1);}
@@ -1277,14 +1295,16 @@ function drawTimeline(res,D){
 }
 /* export for improving the rally detection: raw tracks, sounds and swings plus the detected and the corrected rallies; no video */
 function exportData(res,D){const t0=current.EX.t0,info=$('exportInfo');
-  const out={app:'SquashAnalyzerPro',format:2,exportiert:new Date().toISOString(),video:res.vid||'',dauer_s:res.dur,t0:res.t0,fps:FPS,namen:res.names,
+  const out={app:'SquashAnalyzerPro',format:3,exportiert:new Date().toISOString(),video:res.vid||'',dauer_s:res.dur,t0:res.t0,fps:FPS,namen:res.names,
     kalibrierung:res.cal,erkannt_anteil:res.cover,fuesse_abgeschnitten_anteil:res.cut,ton_ignoriert:!!res.noAudio,
     tracks:res.tracks.map(tr=>tr.map(q=>[+q.t.toFixed(2),+q.x.toFixed(2),+q.y.toFixed(2)])),pose:res.pose||null,
     ballgeraeusche:res.hits||null,schlagbewegung_bei_geraeusch:res.hitSwing||null,schwuenge:res.swings||null,schwung_fenster:res.swingWin||null,positionen_20fps:res.dense||null,
     korrekturen:{ende:res.rallyFix||{},bearbeitung:res.rallyEdit||{},aufschlag:res.serveFix||{}},alle_geprueft:!!res.rallyChecked,
     ballwechsel:D.rallies.map(r=>({beginn:+(t0+r.a/FPS).toFixed(2),ende:+(t0+r.b/FPS).toFixed(2),ende_automatisch:+(t0+r.b0/FPS).toFixed(2),
       von_hand_hinzugefuegt:!!r.manual,unsicher:!!r.guess,beginn_korrigiert:!!r.fixedA,ende_korrigiert:!!r.fixed,mit_aufschlag:r.serve!=null})),
-    aufschlaege:(D.serves||[]).map(sv=>({t:sv.t,spieler:sv.p}))};
+    aufschlaege:(D.serves||[]).map(sv=>({t:sv.t,spieler:sv.p})),
+    schlaege:D.rallies.map((r,ri)=>({ballwechsel:ri+1,beginn:+(t0+r.a/FPS).toFixed(2),von_hand_markiert:!!r.shotsChecked,
+      automatisch:(D.shotsAuto||[]).filter(x=>x.r===ri).map(x=>[+x.t.toFixed(2),x.p]),von_hand:r.shotsChecked?(res.shotEdit||{})[r.key]:null}))};
   const nm=`SquashAnalyzerPro-Daten-${(res.names||[]).join('-').replace(/[^\wäöüÄÖÜ-]+/g,'_')}-${new Date().toISOString().slice(0,10)}.json`;
   const blob=new Blob([JSON.stringify(out)],{type:'application/json'});
   (async()=>{try{
@@ -1328,7 +1348,10 @@ function renderDeep(res,EX,D,names){
     $('pathWin').innerHTML=v==='all'?'':w!=null?`<span class="dot" style="background:${pcol(w)}"></span>Punkt für ${esc(names[w])}`:'<span class="hint">Punktgewinner offen (kein Aufschlag danach erkannt)</span>';
     const sh=(D.shots||[]).filter(x=>v==='all'||x.r===+v);
     $('pathLegend').textContent=!D.shots||!D.shots.length?'Schläge werden markiert, wenn die Schlagbewegungs-Prüfung lief (KI-Erkennung und Ballgeräusche nötig).':v==='all'?'Punkte: Position beim eigenen Schlag. Der Rahmen eines Ballwechsels zeigt den Punktgewinner.':'Gefüllter Kreis mit Nummer: wer schlägt, und wo. Leerer Kreis: wo der Gegner dabei stand. Der farbige Rahmen zeigt, wer den Punkt gemacht hat.';
-    const box=$('shotBox');box.hidden=v==='all'||!sh.length;$('shotList').innerHTML='';$('thumbInfo').textContent='';
+    const box=$('shotBox');box.hidden=v==='all'||!res.own;$('shotList').innerHTML='';$('thumbInfo').textContent='';
+    if(!box.hidden){const r=R[+v];$('shotMarkBtn').disabled=!haveVideo||analyzing;$('shotMarkBtn').onclick=()=>markShots(res,D,+v);
+      $('shotResetBtn').hidden=!r.shotsChecked;$('shotResetBtn').onclick=()=>{delete res.shotEdit[r.key];saveRes(res);rerender(res);};
+      $('shotMarkInfo').textContent=(r.shotsChecked?`Von dir markiert: ${sh.length} Schläge.`:sh.length?'Automatisch erkannt.':'Keine Schläge erkannt.')+(haveVideo?' Mit «Schläge selbst markieren» spielst du den Ballwechsel ab und tippst bei jedem Schlag auf den Namen des Spielers.':' Zum Markieren muss das Video in der App geladen sein.');}
     if(!box.hidden){sh.forEach((x,j)=>{const d=document.createElement('div');d.className='shot';const cv=document.createElement('canvas');drawShotCourt(cv,x,j+1);
       d.innerHTML=`<div class="cap"><b>${j+1}</b><span class="dot" style="background:${pcol(x.p)}"></span>${esc(names[x.p])}<span class="hint mono">${showT1(x.t)}</span></div>`;d.appendChild(cv);d.dataset.t=x.t;$('shotList').appendChild(d);});
       const tb=$('thumbBtn');tb.disabled=!haveVideo||analyzing;$('thumbInfo').textContent=haveVideo?'':'Dafür muss das Video in der App geladen sein.';
@@ -1689,7 +1712,7 @@ function playRange(from,to,title,note,mark){if(!haveVideo||analyzing)return;cons
   go(1);$('playerAgain').onclick=()=>go(1);$('playerSlow').onclick=()=>go(.5);
   /* optional: mark the start or end of a rally at the current video position */
   ['Start','End'].forEach(w=>{const b=$('player'+w);b.hidden=!mark;b.onclick=mark?()=>{const t=video.currentTime;$('playerClose').onclick();mark(w==='Start'?'a':'b',t);}:null;});
-  $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;$('playerClose').onclick=null;['Start','End'].forEach(w=>$('player'+w).hidden=true);};}
+  $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;$('playerClose').onclick=null;['Start','End'].forEach(w=>$('player'+w).hidden=true);$('shotMarkRow').hidden=true;$('markCount').textContent='';};}
 /* still frames of a scene with both players' floor positions, for the report */
 async function sceneFrames(res,x,C){const out=[];const at=posFn(res,current.EX.t0);const Hm=homog(COURT_PTS,(res.cal||H.map(h=>[h.u,h.v])));
   for(const o of[-.5,0,.6,1.2]){const t=Math.max(0,x.t+o);await seekTo(t);const W=300,Ht=Math.round(W*(video.videoHeight||9)/(video.videoWidth||16));const cv=document.createElement('canvas');cv.width=W;cv.height=Ht;const c=cv.getContext('2d');c.drawImage(video,0,0,W,Ht);
