@@ -235,7 +235,7 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
     <div class="card" id="rallyCard" hidden>
       <h2>Ballwechsel</h2>
       <label class="pl hint"><input type="checkbox" id="useAudio"> Ballgeräusche für das Ende verwenden</label>
-      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt etwas nicht, korrigiere es hier: Beginn und Ende verschieben, mit ▶ ansehen, mit ✕ löschen oder unten einen fehlenden Ballwechsel hinzufügen. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, + = von dir hinzugefügt, ↺ setzt das Ende zurück.</p>
+      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt etwas nicht, korrigiere es hier: Beginn und Ende verschieben, mit ▶ ansehen, mit ✕ löschen oder unten einen fehlenden Ballwechsel hinzufügen. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, + = von dir hinzugefügt, ? = unsicher (ohne erkannten Aufschlag, nur aus Ballgeräuschen, bitte prüfen), ↺ setzt das Ende zurück.</p>
       <p class="hint" id="learnLine"></p>
       <h3>Zeitleiste</h3>
       <div class="tl" id="rallyTl"></div>
@@ -963,12 +963,34 @@ function findRallies(n,t0,Vs,expl,hits,serves,pick,bias,swing){
   let rallies=[],src='move';
   if(serves&&serves.length){src='serve';
     /* a rally is over at the latest when the next server takes his position in the box */
-    serves.forEach((sv,i)=>{const a=sv.k,cap=pickCap(sv.k,i+1<serves.length?Math.min(serves[i+1].k-2*FPS,serves[i+1].k0):n-1);let end=audioEnd(a,cap);
+    /* all = every serve candidate; a false one (see rule below) still caps the rally before it, because the players
+       had lined up again, but it gets no rally and no point */
+    const all=serves.slice();
+    const prov=i=>{const sv=all[i],a=sv.k,cap=pickCap(sv.k,i+1<all.length?Math.min(all[i+1].k-2*FPS,all[i+1].k0):n-1);let end=audioEnd(a,cap);
       if(end==null){let last=a,quiet=0;for(let k=a;k<=cap;k++){if(expl[k]){last=k;quiet=0;}else if(++quiet>3.5*FPS)break;}end=last+FPS;}
-      const b0=Math.min(end,cap);if(b0-a<1.5*FPS)return;end=Math.max(Math.min(end+bk,cap),a+Math.round(1.5*FPS));rallies.push({a,b:end,b0,serve:i});});
+      return{a,cap,end,b0:Math.min(end,cap)};};
+    /* squash rule: whoever wins a rally serves the next one from the other box. Two serves in a row by the same player
+       from the same box, less than 20 s apart, mean one of them is false (or a let): the one with the shorter rally is dropped.
+       Further apart, a missed rally may lie between them, so both stay. */
+    {let last=-1;for(let i=0;i<all.length;i++){if(last>=0){const s=all[last],u=all[i];
+      if(s.p===u.p&&s.side!=null&&s.side===u.side&&u.k-s.k<20*FPS){const d0=prov(last),d1=prov(i);if((d0.b0-d0.a)<(d1.b0-d1.a)){s.fake=true;last=i;}else u.fake=true;continue;}}last=i;}}
+    serves.length=0;all.forEach(s=>{if(!s.fake)serves.push(s);});
+    all.forEach((sv,i)=>{if(sv.fake)return;const P=prov(i),a=P.a,cap=P.cap,b0=P.b0;if(b0-a<.6*FPS)return;
+      const end=Math.max(Math.min(P.end+bk,cap),a+Math.round(.6*FPS));rallies.push({a,b:end,b0,serve:serves.indexOf(sv)});});
     /* the video may start in the middle of a rally: movement before the first serve */
     const first=serves[0].k-2*FPS;
     mv.filter(r=>r.a<first).forEach(r=>{const b=pickCap(r.a,Math.min(r.b,first));const ae=audioEnd(r.a,b);const e0=ae!=null?Math.min(b,ae):b;if(e0-r.a<3*FPS)return;const e=Math.max(Math.min(b,e0+bk),r.a+3*FPS);rallies.push({a:r.a,b:e,b0:e0});});
+    rallies.sort((x,y)=>x.a-y.a);}
+  if(src==='serve'){
+    /* stretches without a detected serve: a chain of at least 3 ball sounds (gaps <= 3.5 s, players moving) between two rallies
+       becomes an uncertain rally, so it can be checked instead of being missed */
+    const busy=k=>rallies.some(r=>k>=r.a-2*FPS&&k<=r.b+2*FPS);let ch=null;const cs=[];
+    for(const h of H){if(busy(h)){ch=null;continue;}if(ch&&h-ch.b<=3.5*FPS){ch.b=h;ch.c++;}else{ch={a:h,b:h,c:1};cs.push(ch);}}
+    /* players take turns: with the swing check per sound, the hitter must change at least 3 times in the chain */
+    const hitter=k=>{if(!swing||!swing.length)return null;const t=t0+k/FPS;const s=swing.find(x=>Math.abs(x[0]-t)<.06);return !s||s[1]===s[2]?-1:s[1]>s[2]?0:1;};
+    const turns=c=>{const w=H.filter(h=>h>=c.a&&h<=c.b).map(hitter);if(w.some(x=>x===null))return null;const q=w.filter(x=>x>=0);let m=0;for(let i=1;i<q.length;i++)if(q[i]!==q[i-1])m++;return m;};
+    cs.filter(c=>{if(c.c<3||c.b-c.a<2*FPS)return false;const m=turns(c);return m==null?c.c>=5:m>=3;}).forEach(c=>{const a=Math.max(0,Math.round(c.a-.5*FPS)),b=Math.min(n-1,Math.round(c.b+.7*FPS));
+      if(!rallies.some(r=>a<=r.b&&b>=r.a))rallies.push({a,b,b0:b,guess:true});});
     rallies.sort((x,y)=>x.a-y.a);}
   else rallies=mv.map(r=>{const b=pickCap(r.a,r.b);const ae=audioEnd(r.a,b);const e0=ae!=null?Math.min(b,ae):b;return{a:r.a,b:Math.max(Math.min(b,e0+bk),r.a+3*FPS),b0:e0};}).filter(r=>r.b0-r.a>=3*FPS);
   const shots=H.length?shotsFrom(H.map(k=>t0+k/FPS)).map(t=>(t-t0)*FPS):null;
@@ -988,11 +1010,11 @@ function findServes(X,Vs,n,t0){
       if(run>=3){let ks=k-1;while(ks>0&&!X[p][ks])ks--;const q=X[p][ks],oq=X[o][ks];
         let ok=!!oq&&oq.y>=q.y+.3&&(Math.sign(oq.x-TX)!==Math.sign(q.x-TX)||boxOf(oq)<0);
         if(ok){ok=false;for(let j=ks+1;j<=Math.min(n-1,ks+Math.round(2.5*FPS));j++)if(Vs[o][j]!=null&&Vs[o][j]>=.8){ok=true;break;}}
-        if(ok)ev.push({k:ks,k0:Math.max(0,ks-run+1),p,score:run});}
+        if(ok)ev.push({k:ks,k0:Math.max(0,ks-run+1),p,score:run,side:q.x<TX?0:1});}
       run=0;gap=0;}}
   ev.sort((a,b)=>a.k-b.k);
   const out=[];for(const e of ev){const l=out[out.length-1];if(l&&e.k-l.k<4*FPS){if(e.score>l.score)out[out.length-1]=e;}else out.push(e);}
-  return out.map(e=>({k:e.k,k0:e.k0,t:+(t0+e.k/FPS).toFixed(1),p:e.p}));}
+  return out.map(e=>({k:e.k,k0:e.k0,t:+(t0+e.k/FPS).toFixed(1),p:e.p,side:e.side}));}
 /* Point-a-rally scoring: whoever serves won the rally before (except the very first serve). Games to 11, two clear. */
 function scoreFrom(serves,fix,prior){
   const pts=[0,0],games=[0,0];let game=1;const rows=[];let prevReal=!!prior;
@@ -1189,7 +1211,7 @@ function renderRallyList(res,D){
   drawTimeline(res,D);
   const tt=k=>showT1(t0+k/FPS);
   const btn=(i,w,d,lab,aria)=>`<button data-i="${i}" data-w="${w}" data-d="${d}" aria-label="${aria}">${lab}</button>`;
-  $('rallyTable').innerHTML=D.rallies.length?`<table class="xt"><thead><tr><th>Nr.</th><th>Beginn</th><th>Ende</th><th></th></tr></thead><tbody>${D.rallies.map((r,i)=>`<tr><td class="mono">${i+1}${r.manual?' +':''}</td>
+  $('rallyTable').innerHTML=D.rallies.length?`<table class="xt"><thead><tr><th>Nr.</th><th>Beginn</th><th>Ende</th><th></th></tr></thead><tbody>${D.rallies.map((r,i)=>`<tr><td class="mono">${i+1}${r.manual?' +':r.guess?' ?':''}</td>
     <td><span class="mono">${tt(r.a)}${r.fixedA?'*':''}</span><div class="adj">${btn(i,'a',-1,'−1','Beginn 1 s früher')}${btn(i,'a',1,'+1','Beginn 1 s später')}</div></td>
     <td><span class="mono">${tt(r.b)}${r.fixed?'*':''}</span><div class="adj">${btn(i,'b',-3,'−3','Ende 3 s früher')}${btn(i,'b',-1,'−1','Ende 1 s früher')}${btn(i,'b',1,'+1','Ende 1 s später')}${r.fixed&&!r.manual?btn(i,'b',0,'↺','Ende zurücksetzen'):''}</div></td>
     <td><div class="adj"><button data-i="${i}" data-w="play" ${haveVideo?'':'disabled'} aria-label="Ballwechsel ${i+1} abspielen">▶</button>${btn(i,'del',0,'✕','Ballwechsel '+(i+1)+' löschen')}</div></td></tr>`).join('')}</tbody></table>`
@@ -1220,13 +1242,14 @@ function drawTimeline(res,D){
   for(let m=0;m*60<=res.dur+1e-6;m++){const xm=x(t0+m*60);g+=`<line x1="${xm}" x2="${xm}" y1="${top}" y2="${Ht-16}" stroke="var(--rule)"/><text x="${xm+3}" y="${Ht-4}" font-size="10" fill="var(--muted)" font-family="IBM Plex Mono,monospace">${showT(t0+m*60)}</text>`;}
   g+=`<line x1="${L}" x2="${W-L}" y1="${y(1.8)}" y2="${y(1.8)}" stroke="var(--muted)" stroke-dasharray="3 4" opacity=".6"/>`;
   D.rallies.forEach((r,i)=>{const xa=x(t0+r.a/FPS),w=Math.max(2,(r.b-r.a+1)/FPS*pps);
-    g+=`<rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="var(--line)" opacity=".16"/><rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="none" stroke="var(--line)" stroke-width="${r.manual?2:1}"${r.manual?' stroke-dasharray="4 3"':''}/><text x="${xa+3}" y="${top+11}" font-size="10" font-weight="700" fill="var(--line)" font-family="IBM Plex Mono,monospace">${i+1}</text>`;});
+    const col=r.guess?'var(--pb)':'var(--line)';
+    g+=`<rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="${col}" opacity=".16"/><rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="none" stroke="${col}" stroke-width="${r.manual?2:1}"${r.manual?' stroke-dasharray="4 3"':r.guess?' stroke-dasharray="2 2"':''}/><text x="${xa+3}" y="${top+11}" font-size="10" font-weight="700" fill="${col}" font-family="IBM Plex Mono,monospace">${i+1}${r.guess?'?':''}</text>`;});
   Vs.forEach((v,p)=>{let d='',pen=false;for(let k=0;k<n;k++){if(v[k]==null){pen=false;continue;}d+=(pen?'L':'M')+x(t0+k/FPS).toFixed(1)+' '+y(v[k]).toFixed(1);pen=true;}
     g+=`<path d="${d}" fill="none" stroke="${pcol(p)}" stroke-width="1.2" opacity=".9"/>`;});
   const hits=res.noAudio?[]:(res.hits||[]);hits.forEach(h=>{const xh=x(h).toFixed(1);g+=`<line x1="${xh}" x2="${xh}" y1="${base+4}" y2="${base+13}" stroke="var(--ink)" opacity=".55"/>`;});
   (D.serves||[]).forEach(sv=>{const xs=x(sv.t);g+=`<path d="M${xs.toFixed(1)},${base+16} l-4.5,8 h9 z" fill="${pcol(sv.p)}"/>`;});
   box.innerHTML=`<svg width="${W}" height="${Ht}" viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Zeitleiste der Ballwechsel">${g}</svg>`;
-  $('rallyTlLeg').innerHTML=`<span><i style="background:var(--line);opacity:.35"></i>Ballwechsel (gestrichelt: von dir hinzugefügt)</span><span><i style="background:var(--pa)"></i>Tempo ${esc(res.names[0])}</span><span><i style="background:var(--pb)"></i>Tempo ${esc(res.names[1])}</span><span>gestrichelte Linie: 1,8 m/s (schnelle Aktion)</span><span>Striche unten: Ballgeräusche</span><span>Dreiecke: Aufschläge</span>`;
+  $('rallyTlLeg').innerHTML=`<span><i style="background:var(--line);opacity:.35"></i>Ballwechsel (gestrichelt: von dir hinzugefügt)</span><span><i style="background:var(--pb);opacity:.35"></i>unsicher, bitte prüfen</span><span><i style="background:var(--pa)"></i>Tempo ${esc(res.names[0])}</span><span><i style="background:var(--pb)"></i>Tempo ${esc(res.names[1])}</span><span>gestrichelte Linie: 1,8 m/s (schnelle Aktion)</span><span>Striche unten: Ballgeräusche</span><span>Dreiecke: Aufschläge</span>`;
   box.querySelector('svg').onclick=e=>{const rc=e.currentTarget.getBoundingClientRect();const t=t0+((e.clientX-rc.left)*(W/rc.width)-L)/pps;
     const i=D.rallies.findIndex(r=>t>=t0+r.a/FPS&&t<=t0+(r.b+1)/FPS);
     if(i>=0){const r=D.rallies[i];if(haveVideo)playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${showT1(t0+r.a/FPS)} bis ${showT1(t0+r.b/FPS)}`);else $('tlHint').textContent='Zum Abspielen muss das Video in der App geladen sein.';return;}
@@ -1236,13 +1259,13 @@ function drawTimeline(res,D){
 }
 /* export for improving the rally detection: raw tracks, sounds and swings plus the detected and the corrected rallies; no video */
 function exportData(res,D){const t0=current.EX.t0,info=$('exportInfo');
-  const out={app:'SquashAnalyzerPro',format:1,exportiert:new Date().toISOString(),video:res.vid||'',dauer_s:res.dur,t0:res.t0,fps:FPS,namen:res.names,
+  const out={app:'SquashAnalyzerPro',format:2,exportiert:new Date().toISOString(),video:res.vid||'',dauer_s:res.dur,t0:res.t0,fps:FPS,namen:res.names,
     kalibrierung:res.cal,erkannt_anteil:res.cover,fuesse_abgeschnitten_anteil:res.cut,ton_ignoriert:!!res.noAudio,
     tracks:res.tracks.map(tr=>tr.map(q=>[+q.t.toFixed(2),+q.x.toFixed(2),+q.y.toFixed(2)])),pose:res.pose||null,
     ballgeraeusche:res.hits||null,schlagbewegung_bei_geraeusch:res.hitSwing||null,schwuenge:res.swings||null,schwung_fenster:res.swingWin||null,positionen_20fps:res.dense||null,
     korrekturen:{ende:res.rallyFix||{},bearbeitung:res.rallyEdit||{},aufschlag:res.serveFix||{}},alle_geprueft:!!res.rallyChecked,
     ballwechsel:D.rallies.map(r=>({beginn:+(t0+r.a/FPS).toFixed(2),ende:+(t0+r.b/FPS).toFixed(2),ende_automatisch:+(t0+r.b0/FPS).toFixed(2),
-      von_hand_hinzugefuegt:!!r.manual,beginn_korrigiert:!!r.fixedA,ende_korrigiert:!!r.fixed,mit_aufschlag:r.serve!=null})),
+      von_hand_hinzugefuegt:!!r.manual,unsicher:!!r.guess,beginn_korrigiert:!!r.fixedA,ende_korrigiert:!!r.fixed,mit_aufschlag:r.serve!=null})),
     aufschlaege:(D.serves||[]).map(sv=>({t:sv.t,spieler:sv.p}))};
   const nm=`SquashAnalyzerPro-Daten-${(res.names||[]).join('-').replace(/[^\wäöüÄÖÜ-]+/g,'_')}-${new Date().toISOString().slice(0,10)}.json`;
   const blob=new Blob([JSON.stringify(out)],{type:'application/json'});
