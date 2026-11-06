@@ -134,6 +134,12 @@ select{font:inherit;padding:8px 10px;border-radius:7px;border:1px solid var(--ru
 footer{color:var(--muted);font-size:13px;max-width:62ch}
 @media (max-width:420px){h1{font-size:38px}.stat .v{font-size:26px}}
 @media (prefers-reduced-motion:reduce){.bar i{transition:none}}
+.tl{overflow-x:auto;border:1px solid var(--rule);border-radius:8px;background:var(--bg)}
+.tl svg{display:block;cursor:pointer}
+.tlleg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted)}
+.tlleg i{display:inline-block;width:12px;height:10px;margin-right:4px;vertical-align:-1px;border-radius:2px}
+.addrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.addrow label.f{flex:0 1 130px;min-width:110px}
 .vhold{position:absolute;width:2px;height:2px;opacity:0;pointer-events:none;left:0;top:0}
 </style>
 
@@ -238,9 +244,25 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
     <div class="card" id="rallyCard" hidden>
       <h2>Ballwechsel</h2>
       <label class="pl hint"><input type="checkbox" id="useAudio"> Ballgeräusche für das Ende verwenden</label>
-      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt ein Ende nicht, verschiebe es hier. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, ↺ setzt zurück.</p>
+      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt etwas nicht, korrigiere es hier: Beginn und Ende verschieben, mit ▶ ansehen, mit ✕ löschen oder unten einen fehlenden Ballwechsel hinzufügen. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, + = von dir hinzugefügt, ↺ setzt das Ende zurück.</p>
       <p class="hint" id="learnLine"></p>
+      <h3>Zeitleiste</h3>
+      <div class="tl" id="rallyTl"></div>
+      <div class="tlleg" id="rallyTlLeg"></div>
+      <p class="hint" id="tlHint">Tippe auf einen Ballwechsel (rote Fläche), um ihn abzuspielen. Tippe in eine Lücke, um dort einen fehlenden Ballwechsel einzutragen.</p>
       <div class="tablewrap" id="rallyTable"></div>
+      <h3>Ballwechsel hinzufügen</h3>
+      <div class="addrow">
+        <label class="f">Beginn (m:ss)<input id="addFrom" type="text" inputmode="decimal" placeholder="z. B. 3:12"></label>
+        <label class="f">Ende (m:ss)<input id="addTo" type="text" inputmode="decimal" placeholder="z. B. 3:31"></label>
+        <button id="addPlay">▶ Ansehen</button>
+        <button class="primary" id="addRally">Hinzufügen</button>
+      </div>
+      <p class="hint" id="addMsg"></p>
+      <h3>Referenz für die Verbesserung der Erkennung</h3>
+      <label class="pl hint"><input type="checkbox" id="rallyChecked"> Ich habe alle Ballwechsel in diesem Video geprüft und korrigiert</label>
+      <div class="row"><button id="exportBtn">Analyse-Daten exportieren</button><span class="hint" id="exportInfo"></span></div>
+      <p class="hint">Exportiert Laufwege, Zeitpunkte der Ballgeräusche und Schlagbewegungen, die erkannten und die von dir korrigierten Ballwechsel als JSON-Datei. Das Video selbst ist nicht enthalten.</p>
     </div>
     <div class="card">
       <h2>Laufmeter über die Zeit</h2>
@@ -1065,6 +1087,13 @@ function deepAnalysis(res,EX){
   const RF=findRallies(n,t0,Vs,expl,res.noAudio?null:res.hits,serves,pick,bias,res.hitSwing);
   out.ownShots=RF.ownShots;out._conf=RF.conf;out._X=X;
   const fx=res.rallyFix||{};RF.rallies.forEach(r=>{const key=(t0+r.a/FPS).toFixed(1);r.key=key;const f=fx[key];if(f){const u=f.u!=null?f.u:(f.b||0);r.b=clamp(r.b0+Math.round(u*FPS),r.a+FPS,n-1);r.fixed=true;}});
+  /* your edits: deleted rallies, moved starts, rallies you added (an added rally replaces automatic ones it overlaps) */
+  const ed=res.rallyEdit||{};
+  if(ed.del&&ed.del.length)RF.rallies=RF.rallies.filter(r=>!ed.del.includes(r.key));
+  if(ed.start)RF.rallies.forEach(r=>{const st=ed.start[r.key];if(st!=null){r.a=clamp(Math.round((st-t0)*FPS),0,r.b-FPS);r.fixedA=true;}});
+  (ed.add||[]).forEach(([s0,e0],i)=>{const a=clamp(Math.round((s0-t0)*FPS),0,n-2),b=clamp(Math.round((e0-t0)*FPS),a+1,n-1);
+    RF.rallies=RF.rallies.filter(r=>r.manual||r.b<a||r.a>b);RF.rallies.push({a,b,b0:b,key:'m'+i,manual:true,addIdx:i});});
+  RF.rallies.sort((x,y)=>x.a-y.a);
   out.rallies=RF.rallies;out.rallySrc=RF.src;out.hasAudio=RF.hasAudio;
   out.serves=serves;
   /* a rally that ended before the first serve in the video also gets its point */
@@ -1177,22 +1206,81 @@ function renderScore(res,D,names){
   $('serveTable').querySelectorAll('select').forEach(el=>el.onchange=()=>{const v=el.value;res.serveFix[el.dataset.t]=v==='let'||v==='x'?v:+v;
     try{const{S:_s,DA:_d,EX:_e,...keep}=res;localStorage.setItem('sq-last',JSON.stringify(keep));}catch(e){}renderScore(res,D,names);});
 }
+function saveRes(res){try{const{S:_s,DA:_d,EX:_e,C:_c,...keep}=res;localStorage.setItem('sq-last',JSON.stringify(keep));}catch(e){}}
+function rerender(res){const y=window.scrollY;render(res);window.scrollTo(0,y);}
 function renderRallyList(res,D){
-  const card=$('rallyCard');card.hidden=!res.own||(!D.rallies.length&&!res.noAudio);if(card.hidden)return;
+  const card=$('rallyCard');card.hidden=!res.own;if(card.hidden)return;
   const ua=$('useAudio');ua.checked=!res.noAudio;ua.disabled=!(res.hits&&res.hits.length);
-  ua.onchange=()=>{res.noAudio=!ua.checked;try{const{S:_s,DA:_d,EX:_e,...keep}=res;localStorage.setItem('sq-last',JSON.stringify(keep));}catch(e){}const y=window.scrollY;render(res);window.scrollTo(0,y);};
+  ua.onchange=()=>{res.noAudio=!ua.checked;saveRes(res);rerender(res);};
   const t0=current.EX.t0;res.rallyFix=res.rallyFix||{};
+  const ed=res.rallyEdit=res.rallyEdit||{};ed.add=ed.add||[];ed.del=ed.del||[];ed.start=ed.start||{};
   const lb=D.endBias||{s:0,n:0};$('learnLine').textContent=lb.n?`Aus ${lb.n} Korrekturen bei dieser Kameraposition gelernt: automatische Enden werden um ${lb.s>0?'+':''}${fmt(lb.s,1)} s verschoben.`:'';
   $('learnLine').hidden=!lb.n;
-  $('rallyTable').innerHTML=`<table class="xt"><thead><tr><th>Nr.</th><th>Von</th><th>Bis</th><th>Ende verschieben (s)</th></tr></thead><tbody>${D.rallies.map((r,i)=>`<tr><td class="mono">${i+1}</td><td class="mono">${showT(t0+r.a/FPS)}</td><td class="mono">${showT(t0+r.b/FPS)}${r.fixed?'*':''}</td>
-    <td><div class="adj"><button data-k="${r.key}" data-d="-3" aria-label="Ende 3 s früher">−3</button><button data-k="${r.key}" data-d="-1" aria-label="Ende 1 s früher">−1</button><button data-k="${r.key}" data-d="1" aria-label="Ende 1 s später">+1</button>${r.fixed?`<button data-k="${r.key}" data-d="0" aria-label="Zurücksetzen">↺</button>`:''}</div></td></tr>`).join('')}</tbody></table>`;
-  $('rallyTable').querySelectorAll('button').forEach(b=>b.onclick=()=>{const k=b.dataset.k,d=+b.dataset.d;
-    const r=D.rallies.find(x=>x.key===k);
-    if(d===0||!r){delete res.rallyFix[k];recordFix(res,k,0);}
-    else{const u=(r.b+d*FPS-r.b0)/FPS;res.rallyFix[k]={u};recordFix(res,k,u);}
-    try{const{S:_s,DA:_d,EX:_e,...keep}=res;localStorage.setItem('sq-last',JSON.stringify(keep));}catch(e){}
-    const y=window.scrollY;render(res);window.scrollTo(0,y);});
+  drawTimeline(res,D);
+  const tt=k=>showT1(t0+k/FPS);
+  const btn=(i,w,d,lab,aria)=>`<button data-i="${i}" data-w="${w}" data-d="${d}" aria-label="${aria}">${lab}</button>`;
+  $('rallyTable').innerHTML=D.rallies.length?`<table class="xt"><thead><tr><th>Nr.</th><th>Beginn</th><th>Ende</th><th></th></tr></thead><tbody>${D.rallies.map((r,i)=>`<tr><td class="mono">${i+1}${r.manual?' +':''}</td>
+    <td><span class="mono">${tt(r.a)}${r.fixedA?'*':''}</span><div class="adj">${btn(i,'a',-1,'−1','Beginn 1 s früher')}${btn(i,'a',1,'+1','Beginn 1 s später')}</div></td>
+    <td><span class="mono">${tt(r.b)}${r.fixed?'*':''}</span><div class="adj">${btn(i,'b',-3,'−3','Ende 3 s früher')}${btn(i,'b',-1,'−1','Ende 1 s früher')}${btn(i,'b',1,'+1','Ende 1 s später')}${r.fixed&&!r.manual?btn(i,'b',0,'↺','Ende zurücksetzen'):''}</div></td>
+    <td><div class="adj"><button data-i="${i}" data-w="play" ${haveVideo?'':'disabled'} aria-label="Ballwechsel ${i+1} abspielen">▶</button>${btn(i,'del',0,'✕','Ballwechsel '+(i+1)+' löschen')}</div></td></tr>`).join('')}</tbody></table>`
+    :'<p class="hint">Keine Ballwechsel erkannt. Trage sie unten von Hand ein.</p>';
+  $('rallyTable').querySelectorAll('button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i,r=D.rallies[i],w=b.dataset.w,d=+b.dataset.d;if(!r)return;
+    if(w==='play'){playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${tt(r.a)} bis ${tt(r.b)}. Abgespielt ab 2 s vor dem Beginn bis 3 s nach dem Ende.`);return;}
+    if(r.manual){const m=ed.add[r.addIdx];if(!m)return;
+      if(w==='del')ed.add.splice(r.addIdx,1);else if(w==='a')m[0]=Math.min(m[0]+d,m[1]-1);else if(w==='b')m[1]=Math.max(m[1]+d,m[0]+1);}
+    else if(w==='del'){ed.del.push(r.key);delete res.rallyFix[r.key];delete ed.start[r.key];}
+    else if(w==='a')ed.start[r.key]=+(t0+r.a/FPS+d).toFixed(1);
+    else if(w==='b'){const k=r.key;if(d===0){delete res.rallyFix[k];recordFix(res,k,0);}else{const u=(r.b+d*FPS-r.b0)/FPS;res.rallyFix[k]={u};recordFix(res,k,u);}}
+    res.rallyChecked=false;saveRes(res);rerender(res);});
+  const readAdd=()=>{const a=parseT($('addFrom').value),b=parseT($('addTo').value);
+    if(isNaN(a)||isNaN(b)||b-a<1){$('addMsg').textContent='Bitte Beginn und Ende als m:ss eingeben (z. B. 3:12), das Ende mindestens 1 s nach dem Beginn.';return null;}return[a,b];};
+  $('addPlay').disabled=!haveVideo;
+  $('addPlay').onclick=()=>{const v=readAdd();if(v)playRange(v[0]-2,v[1]+3,'Neuer Ballwechsel',`${showT1(v[0])} bis ${showT1(v[1])}`);};
+  $('addRally').onclick=()=>{const v=readAdd();if(!v)return;ed.add.push(v);$('addMsg').textContent='';$('addFrom').value='';$('addTo').value='';res.rallyChecked=false;saveRes(res);rerender(res);};
+  const ck=$('rallyChecked');ck.checked=!!res.rallyChecked;ck.onchange=()=>{res.rallyChecked=ck.checked;saveRes(res);};
+  $('exportBtn').onclick=()=>exportData(res,D);
 }
+/* timeline: speed of both players, rallies as areas, ball sounds and serves as marks; tap to play or to add a rally */
+function drawTimeline(res,D){
+  const box=$('rallyTl');const t0=current.EX.t0,n=Math.max(1,Math.round(res.dur*FPS));
+  const X=res.tracks.map(tr=>grid(tr,t0,n)),Vs=X.map(speeds);
+  const pps=6,L=10,W=Math.max(320,Math.round(res.dur*pps))+2*L,top=6,sp=70,base=top+sp,Ht=118;
+  const x=t=>L+(t-t0)*pps,y=v=>base-Math.min(v,5)/5*sp;
+  let g=`<rect x="0" y="0" width="${W}" height="${Ht}" fill="var(--surface)"/>`;
+  for(let m=0;m*60<=res.dur+1e-6;m++){const xm=x(t0+m*60);g+=`<line x1="${xm}" x2="${xm}" y1="${top}" y2="${Ht-16}" stroke="var(--rule)"/><text x="${xm+3}" y="${Ht-4}" font-size="10" fill="var(--muted)" font-family="IBM Plex Mono,monospace">${showT(t0+m*60)}</text>`;}
+  g+=`<line x1="${L}" x2="${W-L}" y1="${y(1.8)}" y2="${y(1.8)}" stroke="var(--muted)" stroke-dasharray="3 4" opacity=".6"/>`;
+  D.rallies.forEach((r,i)=>{const xa=x(t0+r.a/FPS),w=Math.max(2,(r.b-r.a+1)/FPS*pps);
+    g+=`<rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="var(--line)" opacity=".16"/><rect x="${xa}" y="${top}" width="${w}" height="${sp}" fill="none" stroke="var(--line)" stroke-width="${r.manual?2:1}"${r.manual?' stroke-dasharray="4 3"':''}/><text x="${xa+3}" y="${top+11}" font-size="10" font-weight="700" fill="var(--line)" font-family="IBM Plex Mono,monospace">${i+1}</text>`;});
+  Vs.forEach((v,p)=>{let d='',pen=false;for(let k=0;k<n;k++){if(v[k]==null){pen=false;continue;}d+=(pen?'L':'M')+x(t0+k/FPS).toFixed(1)+' '+y(v[k]).toFixed(1);pen=true;}
+    g+=`<path d="${d}" fill="none" stroke="${pcol(p)}" stroke-width="1.2" opacity=".9"/>`;});
+  const hits=res.noAudio?[]:(res.hits||[]);hits.forEach(h=>{const xh=x(h).toFixed(1);g+=`<line x1="${xh}" x2="${xh}" y1="${base+4}" y2="${base+13}" stroke="var(--ink)" opacity=".55"/>`;});
+  (D.serves||[]).forEach(sv=>{const xs=x(sv.t);g+=`<path d="M${xs.toFixed(1)},${base+16} l-4.5,8 h9 z" fill="${pcol(sv.p)}"/>`;});
+  box.innerHTML=`<svg width="${W}" height="${Ht}" viewBox="0 0 ${W} ${Ht}" role="img" aria-label="Zeitleiste der Ballwechsel">${g}</svg>`;
+  $('rallyTlLeg').innerHTML=`<span><i style="background:var(--line);opacity:.35"></i>Ballwechsel (gestrichelt: von dir hinzugefügt)</span><span><i style="background:var(--pa)"></i>Tempo ${esc(res.names[0])}</span><span><i style="background:var(--pb)"></i>Tempo ${esc(res.names[1])}</span><span>gestrichelte Linie: 1,8 m/s (schnelle Aktion)</span><span>Striche unten: Ballgeräusche</span><span>Dreiecke: Aufschläge</span>`;
+  box.querySelector('svg').onclick=e=>{const rc=e.currentTarget.getBoundingClientRect();const t=t0+((e.clientX-rc.left)*(W/rc.width)-L)/pps;
+    const i=D.rallies.findIndex(r=>t>=t0+r.a/FPS&&t<=t0+(r.b+1)/FPS);
+    if(i>=0){const r=D.rallies[i];if(haveVideo)playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${showT1(t0+r.a/FPS)} bis ${showT1(t0+r.b/FPS)}`);else $('tlHint').textContent='Zum Abspielen muss das Video in der App geladen sein.';return;}
+    const a=Math.max(t0,t-1),b=Math.min(t0+res.dur,a+12);$('addFrom').value=showT1(a);$('addTo').value=showT1(b);
+    $('addMsg').textContent='Beginn und Ende sind vorausgefüllt. Ansehen, anpassen und dann «Hinzufügen» drücken.';
+    if(haveVideo)playRange(a-1,b+2,'Lücke ansehen',`ab ${showT1(a)}`);};
+}
+/* export for improving the rally detection: raw tracks, sounds and swings plus the detected and the corrected rallies; no video */
+function exportData(res,D){const t0=current.EX.t0,info=$('exportInfo');
+  const out={app:'SquashAnalyzerPro',format:1,exportiert:new Date().toISOString(),video:res.vid||'',dauer_s:res.dur,t0:res.t0,fps:FPS,namen:res.names,
+    kalibrierung:res.cal,erkannt_anteil:res.cover,fuesse_abgeschnitten_anteil:res.cut,ton_ignoriert:!!res.noAudio,
+    tracks:res.tracks.map(tr=>tr.map(q=>[+q.t.toFixed(2),+q.x.toFixed(2),+q.y.toFixed(2)])),pose:res.pose||null,
+    ballgeraeusche:res.hits||null,schlagbewegung_bei_geraeusch:res.hitSwing||null,schwuenge:res.swings||null,schwung_fenster:res.swingWin||null,positionen_20fps:res.dense||null,
+    korrekturen:{ende:res.rallyFix||{},bearbeitung:res.rallyEdit||{},aufschlag:res.serveFix||{}},alle_geprueft:!!res.rallyChecked,
+    ballwechsel:D.rallies.map(r=>({beginn:+(t0+r.a/FPS).toFixed(2),ende:+(t0+r.b/FPS).toFixed(2),ende_automatisch:+(t0+r.b0/FPS).toFixed(2),
+      von_hand_hinzugefuegt:!!r.manual,beginn_korrigiert:!!r.fixedA,ende_korrigiert:!!r.fixed,mit_aufschlag:r.serve!=null})),
+    aufschlaege:(D.serves||[]).map(sv=>({t:sv.t,spieler:sv.p}))};
+  const nm=`SquashAnalyzerPro-Daten-${(res.names||[]).join('-').replace(/[^\wäöüÄÖÜ-]+/g,'_')}-${new Date().toISOString().slice(0,10)}.json`;
+  const blob=new Blob([JSON.stringify(out)],{type:'application/json'});
+  (async()=>{try{
+    if(dlFn){info.textContent='Bitte das Speichern bestätigen …';await dlFn.save({filename:nm,data:blob});}
+    else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nm;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),60000);}
+    info.textContent=`Gespeichert: ${nm} (${fmt(blob.size/1024,0)} KB).`;}
+  catch(e){const c=e&&e.code;info.textContent=c==='declined'?'Speichern abgebrochen.':'Die Datei konnte nicht gespeichert werden.';}})();}
 function renderDeep(res,EX,D,names){
   renderScore(res,D,names);renderRallyList(res,D);
   const R=D.rallies,vm=D.validMin;
@@ -1581,6 +1669,14 @@ async function playScene(x){if(!haveVideo||analyzing)return;const ov=$('player')
   const go=rate=>{video.playbackRate=rate;video.currentTime=from;if(stop)video.removeEventListener('timeupdate',stop);stop=()=>{if(video.currentTime>=to){video.pause();}};video.addEventListener('timeupdate',stop);video.play().catch(()=>{});};
   go(1);$('playerAgain').onclick=()=>go(1);$('playerSlow').onclick=()=>go(.5);
   $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;};}
+/* play any time range of the loaded video in the overlay */
+function playRange(from,to,title,note){if(!haveVideo||analyzing)return;const ov=$('player');if(!ov.hidden&&$('playerClose').onclick)$('playerClose').onclick();
+  const slot=$('playerSlot'),home=video.parentNode,cls=video.className;
+  ov.hidden=false;$('playerTitle').textContent=title;$('playerNote').textContent=note||'';slot.appendChild(video);video.className='';video.controls=true;
+  from=Math.max(0,from);let stop=null;
+  const go=rate=>{video.playbackRate=rate;video.currentTime=from;if(stop)video.removeEventListener('timeupdate',stop);stop=()=>{if(video.currentTime>=to)video.pause();};video.addEventListener('timeupdate',stop);video.play().catch(()=>{});};
+  go(1);$('playerAgain').onclick=()=>go(1);$('playerSlow').onclick=()=>go(.5);
+  $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;$('playerClose').onclick=null;};}
 /* still frames of a scene with both players' floor positions, for the report */
 async function sceneFrames(res,x,C){const out=[];const at=posFn(res,current.EX.t0);const Hm=homog(COURT_PTS,(res.cal||H.map(h=>[h.u,h.v])));
   for(const o of[-.5,0,.6,1.2]){const t=Math.max(0,x.t+o);await seekTo(t);const W=300,Ht=Math.round(W*(video.videoHeight||9)/(video.videoWidth||16));const cv=document.createElement('canvas');cv.width=W;cv.height=Ht;const c=cv.getContext('2d');c.drawImage(video,0,0,W,Ht);
