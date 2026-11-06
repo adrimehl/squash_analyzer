@@ -235,7 +235,7 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
     <div class="card" id="rallyCard" hidden>
       <h2>Ballwechsel</h2>
       <label class="pl hint"><input type="checkbox" id="useAudio"> Ballgeräusche für das Ende verwenden</label>
-      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt etwas nicht, korrigiere es hier: Beginn und Ende verschieben, mit ▶ ansehen, mit ✕ löschen oder unten einen fehlenden Ballwechsel hinzufügen. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, + = von dir hinzugefügt, ? = unsicher (ohne erkannten Aufschlag, nur aus Ballgeräuschen, bitte prüfen), ↺ setzt das Ende zurück.</p>
+      <p class="hint">Ohne Ballgeräusche endet ein Ballwechsel 1 s nach der letzten schnellen Aktion, spätestens wenn sich der nächste Aufschläger ins Feld stellt. Stimmt etwas nicht, korrigiere es hier: Beginn und Ende verschieben, mit ▶ ansehen, mit ✕ löschen oder unten einen fehlenden Ballwechsel hinzufügen. Alle Auswertungen rechnen sich sofort neu. * = von dir angepasst, + = von dir hinzugefügt, ? = unsicher, bitte prüfen (ohne erkannten Aufschlag nur aus Ballgeräuschen gefunden, oder derselbe Spieler schlägt kurz nacheinander zweimal aus demselben Feld auf), ↺ setzt das Ende zurück.</p>
       <p class="hint" id="learnLine"></p>
       <h3>Zeitleiste</h3>
       <div class="tl" id="rallyTl"></div>
@@ -970,13 +970,13 @@ function findRallies(n,t0,Vs,expl,hits,serves,pick,bias,swing){
       if(end==null){let last=a,quiet=0;for(let k=a;k<=cap;k++){if(expl[k]){last=k;quiet=0;}else if(++quiet>3.5*FPS)break;}end=last+FPS;}
       return{a,cap,end,b0:Math.min(end,cap)};};
     /* squash rule: whoever wins a rally serves the next one from the other box. Two serves in a row by the same player
-       from the same box, less than 20 s apart, mean one of them is false (or a let): the one with the shorter rally is dropped.
-       Further apart, a missed rally may lie between them, so both stay. */
+       from the same box, less than 20 s apart, mean one of them is often false; but after a let, or when players do not
+       switch boxes in casual play, both are real. So the one with the shorter rally is kept and marked as uncertain (?). */
     {let last=-1;for(let i=0;i<all.length;i++){if(last>=0){const s=all[last],u=all[i];
-      if(s.p===u.p&&s.side!=null&&s.side===u.side&&u.k-s.k<20*FPS){const d0=prov(last),d1=prov(i);if((d0.b0-d0.a)<(d1.b0-d1.a)){s.fake=true;last=i;}else u.fake=true;continue;}}last=i;}}
+      if(s.p===u.p&&s.side!=null&&s.side===u.side&&u.k-s.k<20*FPS){const d0=prov(last),d1=prov(i);if((d0.b0-d0.a)<(d1.b0-d1.a))s.doubt=true;else u.doubt=true;}}last=i;}}
     serves.length=0;all.forEach(s=>{if(!s.fake)serves.push(s);});
     all.forEach((sv,i)=>{if(sv.fake)return;const P=prov(i),a=P.a,cap=P.cap,b0=P.b0;if(b0-a<.6*FPS)return;
-      const end=Math.max(Math.min(P.end+bk,cap),a+Math.round(.6*FPS));rallies.push({a,b:end,b0,serve:serves.indexOf(sv)});});
+      const end=Math.max(Math.min(P.end+bk,cap),a+Math.round(.6*FPS));rallies.push({a,b:end,b0,serve:serves.indexOf(sv),guess:!!sv.doubt});});
     /* the video may start in the middle of a rally: movement before the first serve */
     const first=serves[0].k-2*FPS;
     mv.filter(r=>r.a<first).forEach(r=>{const b=pickCap(r.a,Math.min(r.b,first));const ae=audioEnd(r.a,b);const e0=ae!=null?Math.min(b,ae):b;if(e0-r.a<3*FPS)return;const e=Math.max(Math.min(b,e0+bk),r.a+3*FPS);rallies.push({a:r.a,b:e,b0:e0});});

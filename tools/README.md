@@ -14,6 +14,14 @@ node tools/evaluate_rallies.js /tmp/detection.js <export>.json -v
 Ausgabe: gefundene, fehlende und falsche Ballwechsel sowie die Abweichung von Beginn und Ende.
 Die Export-Dateien enthalten persönliche Daten (Namen, Spielverlauf) und gehören nicht ins Repository.
 
-Stand nach der Verbesserung vom 6.11.2026 (ein geprüftes Video, 4:40 min, 16 Ballwechsel):
-vorher 12/16 gefunden, 2 falsch; nachher alle 16 gefunden (einer zu kurz), 0 falsch.
-Enden im Median 2,2 s zu spät; die App gleicht das über das Lernen aus Korrekturen aus.
+Stand 6.11.2026, zwei geprüfte Videos (Video 1: 4:40 min, 16 Ballwechsel; Video 2: 6:05 min, 20 Ballwechsel):
+
+| | Video 1 vorher | Video 1 jetzt | Video 2 vorher | Video 2 jetzt |
+|---|---|---|---|---|
+| gefunden | 12/16 | 15/16 | 18/20 | 19/20 |
+| falsch, nicht markiert | 2 | 0 | 1 | 0 |
+| falsch, als ? markiert | – | 3 | – | 1 |
+
+Der jeweils fehlende ist gefunden, aber stark verkürzt (Beginn bzw. Ende), und zählt darum nicht als Treffer.
+Lehre aus Video 2: Die Aufschlag-Regel (zweimal dasselbe Feld) darf nicht löschen, nur markieren:
+nach einem Let oder im lockeren Spiel sind beide Aufschläge echt.
