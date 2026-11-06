@@ -350,7 +350,7 @@ footer{color:var(--muted);font-size:13px;max-width:62ch}
   <footer>Grenzen: Die Messung basiert auf den Füssen im Bild. Wenn sich die Spieler überdecken oder die Füsse unten aus dem Bild laufen, entstehen kurze Lücken. Lücken bis 2 Sekunden werden als gerade Strecke ergänzt, längere nicht mitgezählt. Die Laufmeter sind darum eher etwas zu tief als zu hoch. Laufwege zwischen den Ballwechseln zählen mit.</footer>
   <video id="vid" class="vhold" playsinline muted preload="auto"></video>
   <div class="shottip" id="shotTip" hidden><canvas id="shotTipCv"></canvas><div class="cap" id="shotTipCap"></div></div>
-  <div class="overlay" id="player" hidden><div class="pbox"><div class="row" style="justify-content:space-between"><b id="playerTitle"></b><button id="playerClose">Schliessen</button></div><div id="playerSlot"></div><p class="hint" id="playerNote"></p><div class="row"><button id="playerAgain">Nochmals</button><button id="playerSlow">Langsam (0,5×)</button></div></div></div>
+  <div class="overlay" id="player" hidden><div class="pbox"><div class="row" style="justify-content:space-between"><b id="playerTitle"></b><button id="playerClose">Schliessen</button></div><div id="playerSlot"></div><p class="hint" id="playerNote"></p><div class="row"><button id="playerAgain">Nochmals</button><button id="playerSlow">Langsam (0,5×)</button><button id="playerStart" hidden>Beginn hier</button><button class="primary" id="playerEnd" hidden>Ende hier</button></div></div></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.22.0/tf.min.js"></script>
@@ -633,6 +633,8 @@ video.addEventListener('loadedmetadata',async()=>{
   bgReady=true;$('fileinfo').textContent=info;
   $('scrub').disabled=false;$('scrub').value=100;
   await seekTo(video.duration*0.1);drawSetup();updateGo();
+  /* a stored result can now use the video: enable play buttons and still frames */
+  if(current&&current.own)rerender(current);
 });
 video.addEventListener('error',()=>{$('loadErr').hidden=false;$('loadErr').textContent='Dieses Video kann der Browser nicht öffnen. Versuche ein MP4 (H.264) oder nimm es mit der normalen Kamera-App neu auf.';});
 async function buildBg(t0,t1,onp){const K=19,N=PW*PH,frames=[];for(let i=0;i<K;i++){await seekTo(t0+(t1-t0)*(i+.5)/K);frames.push(grab().slice());onp((i+1)/K);}
@@ -956,8 +958,18 @@ function findRallies(n,t0,Vs,expl,hits,serves,pick,bias,swing){
       if(l&&l.p===c.p&&c.k-l.k<2*FPS){if(c.sc>l.sc)conf[conf.length-1]=c;continue;}conf.push(c);}
     OWN=H.filter(k=>conf.some(c=>k>=c.k-.15*FPS&&k-c.k<=1.2*FPS));}
   /* end of a rally from the ball sounds: a chain of hits starting near `a`, gaps <= 3.5 s; null if fewer than 2 hits */
-  const chainEnd=(L,a,cap,startWin)=>{const hs=L.filter(h=>h>=a-.5*FPS&&h<=cap);if(!hs.length||hs[0]-a>startWin*FPS)return null;let last=hs[0],c=1;
-    for(const h of hs.slice(1)){if(h-last>3.5*FPS)break;last=h;c++;}return c>=2?Math.round(last+.7*FPS):null;};
+  /* who made a sound and how strong the swing was (from the swing check per sound) */
+  const sInfo=k=>{const t=t0+k/FPS;const s=swing&&swing.length?swing.find(x=>Math.abs(x[0]-t)<.06):null;return s?{w:s[1]===s[2]?-1:(s[1]>s[2]?0:1),sw:Math.max(s[1],s[2])}:{w:-1,sw:3};};
+  /* end of a rally from the ball sounds: a chain of hits starting near `a`. Gaps up to 3 s continue the chain; a longer
+     quiet spell (up to 7 s, e.g. a lob or quiet shots) only when it is followed by a strong shot of the other player.
+     Only strong or alternating shots move the end; weak sounds by the same player (passing the ball back, letting it
+     bounce) do not. Checked against two fully corrected videos. null if fewer than 2 hits. */
+  const chainEnd=(L,a,cap,startWin)=>{const hs=L.filter(h=>h>=a-.5*FPS&&h<=cap);if(!hs.length||hs[0]-a>startWin*FPS)return null;
+    let last=hs[0],lastW=sInfo(hs[0]).w,good=hs[0],c=1;
+    for(const h of hs.slice(1)){const g=(h-last)/FPS,I=sInfo(h),alt=I.w>=0&&lastW>=0&&I.w!==lastW,strong=I.sw>=3;
+      if(!(g<=3||(g<=7&&strong&&alt)))break;
+      if(strong||alt)good=h;last=h;if(I.w>=0)lastW=I.w;c++;}
+    return c>=2?Math.round(good+FPS):null;};
   /* prefer the chain of own shots (the serve swing is often too gentle to count, so it may start up to 5 s later) */
   const audioEnd=(a,cap)=>{if(OWN){const e=chainEnd(OWN,a,cap,5);if(e!=null)return e;}return chainEnd(H,a,cap,2);};
   let rallies=[],src='move';
@@ -1217,7 +1229,7 @@ function renderRallyList(res,D){
     <td><div class="adj"><button data-i="${i}" data-w="play" ${haveVideo?'':'disabled'} aria-label="Ballwechsel ${i+1} abspielen">▶</button>${btn(i,'del',0,'✕','Ballwechsel '+(i+1)+' löschen')}</div></td></tr>`).join('')}</tbody></table>`
     :'<p class="hint">Keine Ballwechsel erkannt. Trage sie unten von Hand ein.</p>';
   $('rallyTable').querySelectorAll('button').forEach(b=>b.onclick=()=>{const i=+b.dataset.i,r=D.rallies[i],w=b.dataset.w,d=+b.dataset.d;if(!r)return;
-    if(w==='play'){playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${tt(r.a)} bis ${tt(r.b)}. Abgespielt ab 2 s vor dem Beginn bis 3 s nach dem Ende.`);return;}
+    if(w==='play'){playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${tt(r.a)} bis ${tt(r.b)}. Abgespielt ab 2 s vor dem Beginn bis 3 s nach dem Ende. Drücke «Beginn hier» beim Aufschlag oder «Ende hier», sobald der Ball tot ist.`,(which,t)=>markRally(res,D,r,which,t));return;}
     if(r.manual){const m=ed.add[r.addIdx];if(!m)return;
       if(w==='del')ed.add.splice(r.addIdx,1);else if(w==='a')m[0]=Math.min(m[0]+d,m[1]-1);else if(w==='b')m[1]=Math.max(m[1]+d,m[0]+1);}
     else if(w==='del'){ed.del.push(r.key);delete res.rallyFix[r.key];delete ed.start[r.key];}
@@ -1232,6 +1244,12 @@ function renderRallyList(res,D){
   const ck=$('rallyChecked');ck.checked=!!res.rallyChecked;ck.onchange=()=>{res.rallyChecked=ck.checked;saveRes(res);};
   $('exportBtn').onclick=()=>exportData(res,D);
 }
+/* set the start or end of a rally to a video time (from «Beginn hier» / «Ende hier» while playing) */
+function markRally(res,D,r,which,t){const t0=current.EX.t0,ed=res.rallyEdit;
+  if(r.manual){const m=ed.add[r.addIdx];if(!m)return;if(which==='a')m[0]=Math.min(t,m[1]-1);else m[1]=Math.max(t,m[0]+1);}
+  else if(which==='a')ed.start[r.key]=+Math.min(t,t0+r.b/FPS-1).toFixed(2);
+  else{const u=+(Math.max(t,t0+r.a/FPS+1)-(t0+r.b0/FPS)).toFixed(2);res.rallyFix[r.key]={u};recordFix(res,r.key,u);}
+  res.rallyChecked=false;saveRes(res);rerender(res);}
 /* timeline: speed of both players, rallies as areas, ball sounds and serves as marks; tap to play or to add a rally */
 function drawTimeline(res,D){
   const box=$('rallyTl');const t0=current.EX.t0,n=Math.max(1,Math.round(res.dur*FPS));
@@ -1252,7 +1270,7 @@ function drawTimeline(res,D){
   $('rallyTlLeg').innerHTML=`<span><i style="background:var(--line);opacity:.35"></i>Ballwechsel (gestrichelt: von dir hinzugefügt)</span><span><i style="background:var(--pb);opacity:.35"></i>unsicher, bitte prüfen</span><span><i style="background:var(--pa)"></i>Tempo ${esc(res.names[0])}</span><span><i style="background:var(--pb)"></i>Tempo ${esc(res.names[1])}</span><span>gestrichelte Linie: 1,8 m/s (schnelle Aktion)</span><span>Striche unten: Ballgeräusche</span><span>Dreiecke: Aufschläge</span>`;
   box.querySelector('svg').onclick=e=>{const rc=e.currentTarget.getBoundingClientRect();const t=t0+((e.clientX-rc.left)*(W/rc.width)-L)/pps;
     const i=D.rallies.findIndex(r=>t>=t0+r.a/FPS&&t<=t0+(r.b+1)/FPS);
-    if(i>=0){const r=D.rallies[i];if(haveVideo)playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${showT1(t0+r.a/FPS)} bis ${showT1(t0+r.b/FPS)}`);else $('tlHint').textContent='Zum Abspielen muss das Video in der App geladen sein.';return;}
+    if(i>=0){const r=D.rallies[i];if(haveVideo)playRange(t0+r.a/FPS-2,t0+r.b/FPS+3,`Ballwechsel ${i+1}`,`${showT1(t0+r.a/FPS)} bis ${showT1(t0+r.b/FPS)}. «Beginn hier» beim Aufschlag, «Ende hier», sobald der Ball tot ist.`,(which,t)=>markRally(res,D,r,which,t));else $('tlHint').textContent='Zum Abspielen muss das Video in der App geladen sein.';return;}
     const a=Math.max(t0,t-1),b=Math.min(t0+res.dur,a+12);$('addFrom').value=showT1(a);$('addTo').value=showT1(b);
     $('addMsg').textContent='Beginn und Ende sind vorausgefüllt. Ansehen, anpassen und dann «Hinzufügen» drücken.';
     if(haveVideo)playRange(a-1,b+2,'Lücke ansehen',`ab ${showT1(a)}`);};
@@ -1663,13 +1681,15 @@ async function playScene(x){if(!haveVideo||analyzing)return;const ov=$('player')
   go(1);$('playerAgain').onclick=()=>go(1);$('playerSlow').onclick=()=>go(.5);
   $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;};}
 /* play any time range of the loaded video in the overlay */
-function playRange(from,to,title,note){if(!haveVideo||analyzing)return;const ov=$('player');if(!ov.hidden&&$('playerClose').onclick)$('playerClose').onclick();
+function playRange(from,to,title,note,mark){if(!haveVideo||analyzing)return;const ov=$('player');if(!ov.hidden&&$('playerClose').onclick)$('playerClose').onclick();
   const slot=$('playerSlot'),home=video.parentNode,cls=video.className;
   ov.hidden=false;$('playerTitle').textContent=title;$('playerNote').textContent=note||'';slot.appendChild(video);video.className='';video.controls=true;
   from=Math.max(0,from);let stop=null;
   const go=rate=>{video.playbackRate=rate;video.currentTime=from;if(stop)video.removeEventListener('timeupdate',stop);stop=()=>{if(video.currentTime>=to)video.pause();};video.addEventListener('timeupdate',stop);video.play().catch(()=>{});};
   go(1);$('playerAgain').onclick=()=>go(1);$('playerSlow').onclick=()=>go(.5);
-  $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;$('playerClose').onclick=null;};}
+  /* optional: mark the start or end of a rally at the current video position */
+  ['Start','End'].forEach(w=>{const b=$('player'+w);b.hidden=!mark;b.onclick=mark?()=>{const t=video.currentTime;$('playerClose').onclick();mark(w==='Start'?'a':'b',t);}:null;});
+  $('playerClose').onclick=()=>{video.pause();if(stop)video.removeEventListener('timeupdate',stop);video.controls=false;video.playbackRate=1;video.className=cls;home.appendChild(video);ov.hidden=true;$('playerClose').onclick=null;['Start','End'].forEach(w=>$('player'+w).hidden=true);};}
 /* still frames of a scene with both players' floor positions, for the report */
 async function sceneFrames(res,x,C){const out=[];const at=posFn(res,current.EX.t0);const Hm=homog(COURT_PTS,(res.cal||H.map(h=>[h.u,h.v])));
   for(const o of[-.5,0,.6,1.2]){const t=Math.max(0,x.t+o);await seekTo(t);const W=300,Ht=Math.round(W*(video.videoHeight||9)/(video.videoWidth||16));const cv=document.createElement('canvas');cv.width=W;cv.height=Ht;const c=cv.getContext('2d');c.drawImage(video,0,0,W,Ht);

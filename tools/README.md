@@ -22,6 +22,10 @@ Stand 6.11.2026, zwei geprüfte Videos (Video 1: 4:40 min, 16 Ballwechsel; Video
 | falsch, nicht markiert | 2 | 0 | 1 | 0 |
 | falsch, als ? markiert | – | 3 | – | 1 |
 
-Der jeweils fehlende ist gefunden, aber stark verkürzt (Beginn bzw. Ende), und zählt darum nicht als Treffer.
+Nach der neuen Ende-Regel (6.11.2026, zweiter Schritt): Video 1 16/16, Video 2 20/20 gefunden; falsche nur noch
+mit ? markiert (3 bzw. 1); Ende im Mittel 2,1 s bzw. 1,8 s daneben (vorher 2,6 s bzw. 1,8 s). Die Regel wurde an
+einem Video abgestimmt und am anderen geprüft (und umgekehrt), damit sie nicht auf ein Video zugeschnitten ist.
+
+Vorher: Der jeweils fehlende war gefunden, aber stark verkürzt (Beginn bzw. Ende), und zählt darum nicht als Treffer.
 Lehre aus Video 2: Die Aufschlag-Regel (zweimal dasselbe Feld) darf nicht löschen, nur markieren:
 nach einem Let oder im lockeren Spiel sind beide Aufschläge echt.
